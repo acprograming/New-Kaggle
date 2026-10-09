@@ -35,6 +35,36 @@ def versions():
             'cuda':str(torch.version.cuda)}
 
 
+def query_diagnostics(model):
+    """Read the spatial parameters and clipped gradient without changing training."""
+    query=model.spatial_queries
+    gradient=query.grad
+    def finite_norm(tensor):
+        if tensor is None:
+            return None
+        value=float(tensor.detach().float().norm().item())
+        return value if math.isfinite(value) else None
+    return {'spatial_query_l2':finite_norm(query),
+            'spatial_query_gradient_l2_after_clip':finite_norm(gradient)}
+
+
+def relay_worker_logs(children, offsets, fold, final=False):
+    """Relay each complete unread worker line; retain an incomplete line for later."""
+    for _,log,arm in children:
+        with Path(log.name).open('r',encoding='utf-8',errors='replace') as reader:
+            reader.seek(offsets.get(arm,0))
+            while True:
+                position=reader.tell()
+                line=reader.readline()
+                if not line:
+                    break
+                if not line.endswith('\n') and not final:
+                    reader.seek(position)
+                    break
+                print('WORKER_LOG',f'{arm}_fold{fold}',line.rstrip('\n'),flush=True)
+            offsets[arm]=reader.tell()
+
+
 def weak_scores(truth, pred):
     scores={}
     for j,target in enumerate(TARGETS):
@@ -239,7 +269,9 @@ def train_arm(args):
             if next_batch%100==0:
                 checkpoint(epoch,next_batch)
                 print(json.dumps({'arm':arm,'fold':fold,'epoch':epoch+1,'batch':next_batch,'of':len(loader),
-                                  'loss':float(loss),'peak_gpu_gib':torch.cuda.max_memory_allocated(device)/2**30}),flush=True)
+                                  'loss':float(loss),'updates':accumulated['updates'],'overflows':accumulated['overflows'],
+                                  'peak_gpu_gib':torch.cuda.max_memory_allocated(device)/2**30,
+                                  **query_diagnostics(model)}),flush=True)
         if accumulated['overflows']>max(10,.05*accumulated['batches']):
             raise FloatingPointError('More than5% of updates overflowed; refusing degraded model')
         ix,probs=predict(model,corpus,va,values,config,fold,device)
@@ -247,7 +279,7 @@ def train_arm(args):
         record={'epoch':epoch+1,'weak_macro_auc':score,'weak_per_target_auc':by_target,
                 'loss':accumulated['loss']/max(1,accumulated['batches']),
                 'seconds_this_session':time.time()-epoch_started,'updates':accumulated['updates'],
-                'overflows':accumulated['overflows']}
+                'overflows':accumulated['overflows'],**query_diagnostics(model)}
         history.append(record)
         if score>best:
             best=score
@@ -362,7 +394,7 @@ def launch(args):
     for fold in folds:
         if time.time()>deadline-config['reserve_minutes']*60:
             break
-        children=[]
+        children=[]; log_offsets={}
         for arm,gpu in [('uniform',0),('spatial',1 if torch.cuda.device_count()>1 else 0)]:
             env=dict(os.environ,CUDA_VISIBLE_DEVICES=str(gpu),OMP_NUM_THREADS='2',MKL_NUM_THREADS='2',PYTHONUNBUFFERED='1')
             command=[sys.executable,str(Path(__file__).resolve()),'--worker','--plan',str(out/'plan.json'),
@@ -378,6 +410,7 @@ def launch(args):
                     child.terminate(); child.wait(timeout=20)
         # Parent provides a hard deadline even if a driver/library hangs.
         while any(p.poll() is None for p,_,_ in children):
+            relay_worker_logs(children,log_offsets,fold)
             if time.time()>deadline:
                 for p,_,_ in children:
                     if p.poll() is None:
@@ -394,6 +427,7 @@ def launch(args):
             log.close()
             if p.returncode:
                 failures.append({'arm':arm,'fold':fold,'exit_code':p.returncode})
+        relay_worker_logs(children,log_offsets,fold,final=True)
         complete=completed_pairs(out,config)
         if failures or fold not in complete:
             atomic_json({'status':'partial_or_failed','completed_pairs':complete,'failures':failures,
