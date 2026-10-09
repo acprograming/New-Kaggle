@@ -185,6 +185,15 @@ def train_arm(args):
     else:
         # Reset after model construction so paired arms begin identical RNG streams.
         torch.manual_seed(seed); torch.cuda.manual_seed_all(seed)
+    # Recover the narrow crash window after the last latest checkpoint was
+    # written but before the final status JSON was committed.
+    if epoch >= config['epochs']:
+        if len(history) != config['epochs'] or not (out/(prefix+'_best.pt')).is_file():
+            raise ValueError('Completed checkpoint lacks its epoch history or selected model')
+        load_checkpoint(model,out/(prefix+'_best.pt'),contract=contract)
+        atomic_json({'status':'complete','contract':contract,'completed_epochs':epoch,
+                     'best_weak_auc':best,'history':history,'recovered_final_status':True},status_path)
+        return
     torch.backends.cudnn.benchmark=False
     started=time.time(); reserve=config['reserve_minutes']*60
     atomic_json({'status':'running','contract':contract,'completed_epochs':epoch,'history':history},status_path)
@@ -398,12 +407,21 @@ def launch(args):
         for arm in ('uniform','spatial'):
             p=out/f'{arm}_fold{fold}_best.pt'
             checkpoints.append({'arm':arm,'fold':fold,'path':str(p),'sha256':sha256(p)})
-    atomic_json({'status':'all_pairs_complete' if len(complete)==config['n_folds'] else 'paired_first_complete',
+    _status='all_pairs_complete' if len(complete)==config['n_folds'] else ('paired_first_complete' if complete else 'no_completed_pairs')
+    atomic_json({'status':_status,
                  'completed_pairs':complete,'planned_pairs':config['n_folds'],'config':config,'checkpoints':checkpoints,
                  'partial_models_deployable':False,'gold_used_for_gradient_or_selection':False,
                  'heldout_opened':False,'validation_boundary':plan['validation_boundary']},out/'experiment_status.json')
     if args.holdout_once:
-        holdout_once(plan,out,args.init)
+        # Keep the once-only gate unopened when this training session has too
+        # little time for a conservative full-family evaluation. A later run
+        # skips the complete pairs and receives a fresh evaluation budget.
+        if time.time() + max(3600,config['reserve_minutes']*120) > deadline:
+            atomic_json({'status':'deferred','reason':'Insufficient remaining GPU budget; rerun --mode all --holdout-once with the same output',
+                         'holdout_opened':False},out/'holdout_deferred.json')
+            print('HOLDOUT_DEFERRED; completed training preserved; once-only gate remains unopened',flush=True)
+        else:
+            holdout_once(plan,out,args.init)
 
 
 def main():
@@ -420,7 +438,13 @@ def main():
     if a.worker:
         if a.plan is None or a.arm is None or a.fold is None or a.deadline is None:
             p.error('Worker requires --plan, --arm, --fold, --deadline')
-        train_arm(a)
+        try:
+            train_arm(a)
+        except Exception as exc:
+            atomic_json({'status':'failed','arm':a.arm,'fold':a.fold,'error':repr(exc),
+                         'partial_models_deployable':False,'resume_checkpoint_may_exist':True},
+                        Path(a.out)/f'{a.arm}_fold{a.fold}_failure.json')
+            raise
     else:
         launch(a)
 
