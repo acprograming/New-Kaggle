@@ -14,17 +14,19 @@ Reusing predictions from previously selected checkpoints is exploratory evaluati
 
 The experiment uses the public 44-plane cache at a 140 mm field of view. Its three channels are neighbouring **sampled** planes, not necessarily adjacent native slices. A fresh, deterministic report/relation-group split reserves 20% as a locked holdout and uses four development folds. Gold58 and connected report/relation groups are excluded from optimization and checkpoint selection. Report grouping does not establish patient/scanner independence when those relations are unavailable.
 
-The GPU trainer and standalone [Kaggle training notebook](notebooks/RSNA_Spatial_Ablation_Train.ipynb) are implemented. Full MRI training has **not** run. Start with the paired first fold; extend the same output directory to all folds only after checking both arms. The final holdout can be opened once, after all paired folds complete.
+Use the GPU trainer or standalone [Kaggle training notebook](notebooks/RSNA_Spatial_Ablation_Train.ipynb) to start a new experiment with the paired first fold. Before extending the same locked output directory, require both per-arm status receipts to show `status='complete'` and `completed_epochs=8`, with the pair recorded as complete. A successful notebook exit alone does not establish training completion. The final holdout can be opened once, after all four paired folds complete.
 
 ```bash
 PYTHONPATH=src python scripts/train_spatial_ablation.py \
   --out /kaggle/working/original_spatial \
   --init /path/to/imagenet_initialization.pt --mode paired-first
-# Resume or extend the same locked experiment:
+# Extend a locked experiment created by these exact source files:
 PYTHONPATH=src python scripts/train_spatial_ablation.py \
   --out /kaggle/working/original_spatial \
   --init /path/to/imagenet_initialization.pt --mode all
 ```
+
+For an original V1 plan, use the [exact-source resume notebook](notebooks/RSNA_Spatial_Ablation_Resume.ipynb). It preserves the original trainer, model, and cache module bytes. The current monitoring trainer changes the source lock and cannot resume a V1 plan through the command above. Reattach the same six input versions and the complete previous `original_spatial` output folder, then set `RESUME_OUTPUT` to its verified Kaggle mount. Keep `MODE='all'` and `EVALUATE_HOLDOUT_ONCE=False` while completing development folds. Source, package, configuration, and input checks must pass without modifying locked receipts.
 
 The notebook lists the required offline Kaggle inputs. Its initialization is a pinned, pure ImageNet backbone, rather than a competition-trained checkpoint. Volume integrity defaults to a clearly identified sampled fingerprint; `--full-volume-sha256` enables full hashing. Interrupted fits resume with optimizer, scheduler, scaler, and RNG state. Partial fits cannot pass the completion or holdout gates.
 
