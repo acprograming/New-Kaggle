@@ -11,6 +11,15 @@ https://www.kaggle.com/code/heliosli/rsna-knee-abnormality-detection
 The ConvNeXt implementation comes from timm / PyTorch Image Models (Apache 2.0):
 https://github.com/huggingface/pytorch-image-models
 
+`src/rsna/raw_corpus44.py` adapts our earlier independent corpus44 pixel implementation. Dreaddevelopment's Apache-2.0 inference notebook informed its DICOM ordering, physical crop and intensity mechanics:
+https://www.kaggle.com/code/dreaddevelopment/knee-mri-twelve-findings-from-a-single-model
+
+The fixed corpus44 slot widths and sampling span were cross-referenced with TranBaDat's public CORPUS44_336 recipe. The source URLs remain in the module; upstream code, datasets and pretrained weights retain their own terms:
+https://github.com/TranBaDat2607/RSNA-Knee-Abnormality-Detection/blob/main/src/rsna_knee/mil/recipes.py
+https://github.com/TranBaDat2607/RSNA-Knee-Abnormality-Detection/blob/main/docs/experiment_ledger.md
+
+These preparation helpers do not establish that the new spatial candidate has passed GPU serving or raw/cache qualification, and they include no production CSV writer.
+
 Further methodological reading:
 https://github.com/mathischmp/challenge_rsna
 

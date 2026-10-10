@@ -30,6 +30,14 @@ For an original V1 plan, use the [exact-source resume notebook](notebooks/RSNA_S
 
 The notebook lists the required offline Kaggle inputs. Its initialization is a pinned, pure ImageNet backbone, rather than a competition-trained checkpoint. Volume integrity defaults to a clearly identified sampled fingerprint; `--full-volume-sha256` enables full hashing. Interrupted fits resume with optimizer, scheduler, scaler, and RNG state. Partial fits cannot pass the completion or holdout gates.
 
+## Trained-family inference preparation
+
+`src/rsna/raw_corpus44.py` retains the recovered 44-plane DICOM preprocessing reference: five fixed acquisition slots, 15–85% sampled-plane span, per-series intensity normalization before the 140 mm crop, and 336-pixel cache images. The wider public-ensemble reader cannot substitute for this training contract.
+
+`src/rsna/spatial_serving.py` prepares the original full 34-window bags and validates complete paired-family provenance before development inference. It preserves the trainer's batch size, FP16 evaluation, valid-window encoding, slot/position metadata, and mean of per-fold probabilities. Empty study bags fail closed. The adapter does not publish a competition CSV or authorize model promotion.
+
+Before a trained submission can be prepared, require all eight arm receipts to show eight completed epochs, all checkpoint hashes to match the locked family, and the single completed weak-label holdout evaluation to name the same selected checkpoints. A holdout-start marker without its completed receipt blocks further evaluation. Fresh raw/cache pixel parity and GPU serving qualification on deterministic label-free development studies remain required; this source preparation does not establish that either arm improves a competition score.
+
 ## Public inference baseline
 
 - [Production notebook](notebooks/RSNA_Knee_Public950_Improved.ipynb): public anatomical mirror CoAtNet plus all three public ConvNeXt reader folds; exact source prediction arithmetic and fixed finding weights, including Lateral OA 0.52.
